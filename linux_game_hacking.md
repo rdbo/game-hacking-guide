@@ -1,15 +1,15 @@
-# Linux Game Hacking
+# Linux Game Hacking  
+  
+# 0.1 - Introduction  
+Linux game hacking is an unpopular topic, possibly because Linux is not very much used in personals desktops, but also because a lot of games don't run natively on it. Due to this limitations, I had a hard time figuring it all out, but I finally did it. This guide will use C++ to make everything more simple, but my <a href="https://github.com/rdbo/libmem">main game hacking framework (libmem)</a> is written in C and supports Windows and Linux, in case you're interested. This guide will also not have much error checking, because it is meant to be simple and straightforward. Anyways, let's get started. The sections '1.X' will be dedicated to external game hacking and the sections '2.X' will be dedicated to internal game hacking.  
 
-# 0.1 - Introduction
-Linux game hacking is an unpopular topic, possibly because Linux is not very much used in personals desktops, but also because a lot of games don't run natively on it. Due to this limitations, I had a hard time figuring it all out, but I finally did it. This guide will use C++ to make everything more simple, but my <a href="https://github.com/rdbo/libmem">main game hacking framework (libmem)</a> is written in C and supports Windows and Linux, in case you're interested. This guide will also not have much error checking, because it is meant to be simple and straightforward. Anyways, let's get started. The sections '1.X' will be dedicated to external game hacking and the sections '2.X' will be dedicated to internal game hacking.
-
-# 0.2 - But before...
+# 0.2 - But before...  
 This tutorial contains a lot of information, some of which you may have no knowledge about. Anything you don't understand from the Linux headers, you can check the man page of this X thing you don't know and it will give you a very detailed information about it, including return type, arguments, bugs, etc.
-Also, you may want to make sure you have the proper Linux headers installed, a compiler like GCC or CLANG, and you may want to run every one of your tests as root.
-
-# 0.3 - Writing code for x86/x64
-
-There are certain stuff we're going to use on this guide where x86 differs from x64. To make sure no problem happens, we're going to define macros that allows us to writing different code for each architecture. In case you're interested in ARM, this tutorial will not cover it specifically, but you can still go through it without having major problems. Here are the macros and includes we're going to use on this guide:
+Also, you may want to make sure you have the proper Linux headers installed, a compiler like GCC or CLANG, and you may want to run every one of your tests as root.  
+  
+# 0.3 - Writing code for x86/x64  
+  
+There are certain stuff we're going to use on this guide where x86 differs from x64. To make sure no problem happens, we're going to define macros that allows us to writing different code for each architecture. In case you're interested in ARM, this tutorial will not cover it specifically, but you can still go through it without having major problems. Here are the macros and includes we're going to use on this guide:  
 ```c++
 #include <iostream>
 #include <cstring>
@@ -45,11 +45,11 @@ There are certain stuff we're going to use on this guide where x86 differs from 
 #define strtoptr(nptr, endptr, base) strtoull(nptr, endptr, base)
 #endif
 ```
-
-# 1.0 - Handling an external process
-
+  
+# 1.0 - Handling an external process  
+  
 On Linux, just like on Windows, each process has its own ID, which I am going to refer to from now on as 'PID' (Process ID). For every process that is launched, a folder is created at '/proc' containing a lot of process information. This folder is very important, because it constains a lot of valuable information that we're going to use, and it is named with the PID of the launched process, so the absolute path would be '/proc/\<pid\>'. The first thing we're going to get a process's ID base on its name.
-As I mentioned, the folder '/proc/\<pid\>' contains a lot of good information, including a file called 'cmdline', which stores the command line used to run the process. As every PID is listed on '/proc', we can loop through every folder there, read the command line, parse it, and then compare it to the process name that was input. Here's a commented function that will do the job for us:
+As I mentioned, the folder '/proc/\<pid\>' contains a lot of good information, including a file called 'cmdline', which stores the command line used to run the process. As every PID is listed on '/proc', we can loop through every folder there, read the command line, parse it, and then compare it to the process name that was input. Here's a commented function that will do the job for us:  
 ```c++
 pid_t get_process_id(std::string process_name)
 {
@@ -117,8 +117,8 @@ pid_t get_process_id(std::string process_name)
 }
 
 ```
-
-Example:
+  
+Example:  
 ```c++
 int main()
 {
@@ -126,9 +126,9 @@ int main()
     std::cout << "PID of target: " << pid << std::endl;
     return 0;
 }
-```
-
-Output:
+```  
+  
+Output:  
 ```
 ...
 
@@ -145,12 +145,12 @@ Command Line: ./target
 Current Process Name: target
 Process ID found: 9918
 PID of target: 9918
-```
-
-# 1.1 - Reading / Writing memory
-
+```  
+  
+# 1.1 - Reading / Writing memory  
+  
 Now that we can get a process's ID, we can do all kinds of stuff with it, including reading and writing memory, injecting calls (later), and much more. There are various ways of reading and writing memory on Linux, we can mention the one using ptrace (we're not gonna use this one for now, because it requires attaching to the process and doing so will freeze it until we continue the execution), and there's also another one using 2 simple functions: process_vm_readv and process_vm_writev (I discovered them by accident on the man page).
-To read memory, we have to use 'process_vm_readv' and tell it where to read on the target process, where to store on the caller process (you can get more info on the man page). Let's make a function for it:
+To read memory, we have to use 'process_vm_readv' and tell it where to read on the target process, where to store on the caller process (you can get more info on the man page). Let's make a function for it:  
 ```c++
 void read_memory(pid_t pid, void* src, void* dst, size_t size)
 {
@@ -170,8 +170,8 @@ void read_memory(pid_t pid, void* src, void* dst, size_t size)
 
     process_vm_readv(pid, &iodst, 1, &iosrc, 1, 0);
 }
-```
-
+```  
+  
 ```c++
 void write_memory(pid_t pid, void* dst, void* src, size_t size)
 {
@@ -191,9 +191,9 @@ void write_memory(pid_t pid, void* dst, void* src, size_t size)
 
     process_vm_writev(pid, &iosrc, 1, &iodst, 1, 0);
 }
-```
-
-Example:
+```  
+  
+Example:  
 ```c++
 int main()
 {
@@ -207,9 +207,9 @@ int main()
     std::cout << "Read buffer (should be 1337): " << read_buffer << std::endl;
     return 0;
 }
-```
-
-Output:
+```  
+  
+Output:  
 ```
 ...
 --------------------
@@ -218,10 +218,10 @@ Command Line: ./target
 Current Process Name: target
 Process ID found: 10478
 Read buffer (should be 1337): 1337
-```
-
-# 1.2 - Getting a loaded module information
-On Linux, processes use shared libraries just like on Windows they use DLLs. One these shared libraries are loaded, we can get some information about them using the file '/proc/\<pid\>/maps', which contains information about all the loaded modules, and some extras, like stack and heap. This information can be used to access certain variables and values through offsets that are based off a module. This part is a little bit longer because it requires a lot of parsing of the maps file and we will also create a new type for our module information to make it easier to use. The information we will get is going to be: base address, size, end address, module name, module path. So let's make a corresponding structure with this information:
+```  
+  
+# 1.2 - Getting a loaded module information  
+On Linux, processes use shared libraries just like on Windows they use DLLs. One these shared libraries are loaded, we can get some information about them using the file '/proc/\<pid\>/maps', which contains information about all the loaded modules, and some extras, like stack and heap. This information can be used to access certain variables and values through offsets that are based off a module. This part is a little bit longer because it requires a lot of parsing of the maps file and we will also create a new type for our module information to make it easier to use. The information we will get is going to be: base address, size, end address, module name, module path. So let's make a corresponding structure with this information:  
 ```c++
 typedef struct _module_t
 {
@@ -232,22 +232,22 @@ typedef struct _module_t
     uintptr_t   size;
     void*       handle; //this will not be used for now, only internally with dlopen
 }module_t;
-```
-
-Now, let's understand the maps file.
+```  
+  
+Now, let's understand the maps file.  
 ```
 7f2a4aa04000-7f2a4aa2a000 r--p 00000000 08:01 27793503                   /usr/lib/libc-2.32.so
 7f2a4aa2a000-7f2a4ab77000 r-xp 00026000 08:01 27793503                   /usr/lib/libc-2.32.so
 7f2a4ab77000-7f2a4abc3000 r--p 00173000 08:01 27793503                   /usr/lib/libc-2.32.so
 7f2a4abc3000-7f2a4abc6000 r--p 001be000 08:01 27793503                   /usr/lib/libc-2.32.so
 7f2a4abc6000-7f2a4abc9000 rw-p 001c1000 08:01 27793503                   /usr/lib/libc-2.32.so
-```
-
+```  
+  
 The module is split in multiple regions due to different protection flags. Each line is a region and it reads like this:
 `base_address-end_address protection_flags offset dev inode module_path`
 For this section of the guide, we're going to get the first base_address (in this case, 0x7f2a4aa04000), the last end address (in this case, 0x7f2a4abc9000) and the module path (in this case, /usr/lib/libc-2.32.so). The module name and size can be gotten through these other values.
-Now, let's make a function that parses the maps file of a process and then returns a module_t structure with all the information. The module will be gotten through its name or path. Also, we're going to get the closest match, so that you'll be able to get modules that have different versions on different OS's.
-
+Now, let's make a function that parses the maps file of a process and then returns a module_t structure with all the information. The module will be gotten through its name or path. Also, we're going to get the closest match, so that you'll be able to get modules that have different versions on different OS's.  
+  
 ```c++
 module_t get_module(pid_t pid, std::string module_name)
 {
@@ -347,9 +347,9 @@ module_t get_module(pid_t pid, std::string module_name)
 
     return mod;
 }
-```
-
-Maps file:
+```  
+  
+Maps file:  
 ```
 5575192e3000-5575192e4000 r--p 00000000 08:01 2242313                    /home/rdbo/Documents/Codes/C/linux_gh/target
 5575192e4000-5575192e5000 r-xp 00001000 08:01 2242313                    /home/rdbo/Documents/Codes/C/linux_gh/target
@@ -358,9 +358,9 @@ Maps file:
 5575192e7000-5575192e8000 rw-p 00003000 08:01 2242313                    /home/rdbo/Documents/Codes/C/linux_gh/target
 55751b24d000-55751b26e000 rw-p 00000000 00:00 0                          [heap]
 ...
-```
-
-Example:
+```  
+  
+Example:  
 ```c++
 int main()
 {
@@ -368,9 +368,9 @@ int main()
     module_t mod = get_module(pid, "target");
     return 0;
 }
-```
-
-Output:
+```  
+  
+Output:  
 ```
 ...
 --------------------
@@ -384,19 +384,17 @@ Module name: target
 Base Address: 0x5575192e3000
 End Address: 0x5575192e8000
 Module Size: 0x5000
-```
-
-GDB Output:
-`(gdb) print mod
-$1 = {name = "target", path = "/home/rdbo/Documents/Codes/C/linux_gh/target", base = 0x5575192e3000, end = 0x5575192e8000, 
-  size = 20480, handle = 0x0}`
-
-
-# 1.3 - Injecting syscalls
-
-
-Linux has something called 'ptrace', which is a syscall that allows us to control the execution flow of another process, the tracee, as a tracer (check out the man page for very detailed info). Before going further, let's understand Linux syscalls. Every syscall has a number that represents its action, and a syscall can have up to 5 arguments (arg0-arg5). 
-On 32 bits, these arguments are stored like this:
+```  
+  
+GDB Output:  
+`(gdb) print mod`  
+`$1 = {name = "target", path = "/home/rdbo/Documents/Codes/C/linux_gh/target", base = 0x5575192e3000, end = 0x5575192e8000, 
+  size = 20480, handle = 0x0}`  
+  
+# 1.3 - Injecting syscalls  
+  
+Linux has something called 'ptrace', which is a syscall that allows us to control the execution flow of another process, the tracee, as a tracer (check out the man page for very detailed info). Before going further, let's understand Linux syscalls. Every syscall has a number that represents its action, and a syscall can have up to 5 arguments (arg0-arg5).  
+On 32 bits, these arguments are stored like this:  
 ```
 eax - syscall number
 ebx - arg0
@@ -405,8 +403,8 @@ edx - arg2
 esi - arg3
 edi - arg4
 ebp - arg5
-```
-On 64 bits:
+```  
+On 64 bits:  
 ```
 rax - syscall number
 rdi - arg0
@@ -415,11 +413,11 @@ rdx - arg2
 r10 - arg3
 r8  - arg4
 r9  - arg5
-```
-The return value of the syscall is stored in EAX/RAX.
-
+```  
+The return value of the syscall is stored in EAX/RAX.  
+  
 To inject a syscall, we're going to write our injection buffer in the EIP/RIP register (which is always executable, unless something goes wrong on the process normal execution), get the return value, and then restore the original execution.
-Let's make a function that does so.
+Let's make a function that does so.  
 ```c++
 void* inject_syscall(
     pid_t pid, 
@@ -527,9 +525,9 @@ void* inject_syscall(
 
     return ret;
 }
-```
-
-Example:
+```  
+  
+Example:  
 ```c++
 int main()
 {
@@ -538,9 +536,9 @@ int main()
     inject_syscall(pid, __NR_exit, (void*)-1, NULL, NULL, NULL, NULL, NULL); //This will force the target process to exit with code -1
     return 0;
 }
-```
-
-Output:
+```  
+  
+Output:  
 ```
 PID: 6010
 Waiting...
@@ -548,18 +546,18 @@ Address: 0x5608bac84068
 Value: 10
 $ echo $? #This prints the last exit code (which should be -1, if everything went fine)
 255 #This is -1, but as an unsigned char.
-```
-
-# 1.4 - Protecting/Allocating/Deallocating Memory
-
-On the previous section, we learned how to inject syscalls. There are certain syscalls that are very usefull for us, such as \__NR_mmap, \__NR_mmap2, \__NR_mprotect, \__NR_munmap.
-
-\__NR_mmap and \_NR_mmap2 (for 32 bits) run the function mmap, which can be used to allocate memory.
-\__NR_munmap runs the function munmap, which can be used to deallocate memory
-\__NR_mprotect runs the function mprotect, which can be used to change the protection flags of a memory region.
-Check the man page for the functions above to understand them better.
-
-Now that we have a function to inject syscalls, making these functions will not be any problem:
+```  
+  
+# 1.4 - Protecting/Allocating/Deallocating Memory  
+  
+On the previous section, we learned how to inject syscalls. There are certain syscalls that are very usefull for us, such as \__NR_mmap, \__NR_mmap2, \__NR_mprotect, \__NR_munmap.  
+  
+\__NR_mmap and \_NR_mmap2 (for 32 bits) run the function mmap, which can be used to allocate memory.  
+\__NR_munmap runs the function munmap, which can be used to deallocate memory.  
+\__NR_mprotect runs the function mprotect, which can be used to change the protection flags of a memory region.  
+Check the man page for the functions above to understand them better.  
+  
+Now that we have a function to inject syscalls, making these functions will not be any problem:  
 ```c++
 void* allocate_memory(pid_t pid, size_t size, int protection)
 {
@@ -596,8 +594,8 @@ void* allocate_memory(pid_t pid, size_t size, int protection)
 
     return ret;
 }
-```
-
+```  
+  
 ```c++
 void deallocate_memory(pid_t pid, void* src, size_t size)
 {
@@ -605,8 +603,8 @@ void deallocate_memory(pid_t pid, void* src, size_t size)
     //int munmap (void *__addr, size_t __len);
     inject_syscall(pid, __NR_munmap, src, (void*)size, NULL, NULL, NULL, NULL);
 }
-```
-
+```  
+  
 ```c++
 void* protect_memory(pid_t pid, void* src, size_t size, int protection)
 {
@@ -614,9 +612,9 @@ void* protect_memory(pid_t pid, void* src, size_t size, int protection)
     //int mprotect (void *__addr, size_t __len, int __prot);
     return inject_syscall(pid, __NR_mprotect, src, (void*)size, (void*)(uintptr_t)protection, NULL, NULL, NULL);
 }
-```
-
-Example:
+```  
+  
+Example:  
 ```c++
 int main()
 {
@@ -627,9 +625,9 @@ int main()
     protect_memory(pid, mod.base, mod.size, PROT_EXEC | PROT_READ | PROT_WRITE);
     return 0;
 }
-```
-
-Output:
+```  
+  
+Output:  
 ```
 Command Line Path: /proc/6489/cmdline
 Command Line: ./target
@@ -642,9 +640,9 @@ Base Address: 0x563f6eaf5000
 End Address: 0x563f6eafa000
 Module Size: 0x5000
 Allocated memory: 0x7f8d159a6000
-```
-
-Maps file:
+```  
+  
+Maps file:  
 ```
 563f6eaf5000-563f6eaf8000 rwxp 00000000 08:01 2242313                    /home/rdbo/Documents/Codes/C/linux_gh/target
 563f6eaf8000-563f6eafa000 rwxp 00002000 08:01 2242313                    /home/rdbo/Documents/Codes/C/linux_gh/target
@@ -657,4 +655,4 @@ Maps file:
 7f8d159ca000-7f8d159d3000 r--p 00023000 08:01 27793455                   /usr/lib/ld-2.32.so
 7f8d159d3000-7f8d159d4000 r--p 0002b000 08:01 27793455                   /usr/lib/ld-2.32.so
 7f8d159d4000-7f8d159d6000 rw-p 0002c000 08:01 27793455                   /usr/lib/ld-2.32.so
-```
+```  
