@@ -10,7 +10,7 @@ Also, you may want to make sure you have the proper Linux headers installed, a c
 # 0.3 - Writing code for x86/x64
 
 There are certain stuff we're going to use on this guide where x86 differs from x64. To make sure no problem happens, we're going to define macros that allows us to writing different code for each architecture. In case you're interested in ARM, this tutorial will not cover it specifically, but you can still go through it without having major problems. Here are the macros and includes we're going to use on this guide:
-```
+```c++
 #include <iostream>
 #include <cstring>
 #include <sstream>
@@ -50,7 +50,7 @@ There are certain stuff we're going to use on this guide where x86 differs from 
 
 On Linux, just like on Windows, each process has its own ID, which I am going to refer to from now on as 'PID' (Process ID). For every process that is launched, a folder is created at '/proc' containing a lot of process information. This folder is very important, because it constains a lot of valuable information that we're going to use, and it is named with the PID of the launched process, so the absolute path would be '/proc/\<pid\>'. The first thing we're going to get a process's ID base on its name.
 As I mentioned, the folder '/proc/\<pid\>' contains a lot of good information, including a file called 'cmdline', which stores the command line used to run the process. As every PID is listed on '/proc', we can loop through every folder there, read the command line, parse it, and then compare it to the process name that was input. Here's a commented function that will do the job for us:
-```
+```c++
 pid_t get_process_id(std::string process_name)
 {
     pid_t pid = (pid_t)-1;
@@ -119,7 +119,7 @@ pid_t get_process_id(std::string process_name)
 ```
 
 Example:
-```
+```c++
 int main()
 {
     pid_t pid = get_process_id("target");
@@ -151,7 +151,7 @@ PID of target: 9918
 
 Now that we can get a process's ID, we can do all kinds of stuff with it, including reading and writing memory, injecting calls (later), and much more. There are various ways of reading and writing memory on Linux, we can mention the one using ptrace (we're not gonna use this one for now, because it requires attaching to the process and doing so will freeze it until we continue the execution), and there's also another one using 2 simple functions: process_vm_readv and process_vm_writev (I discovered them by accident on the man page).
 To read memory, we have to use 'process_vm_readv' and tell it where to read on the target process, where to store on the caller process (you can get more info on the man page). Let's make a function for it:
-```
+```c++
 void read_memory(pid_t pid, void* src, void* dst, size_t size)
 {
     /*
@@ -172,7 +172,7 @@ void read_memory(pid_t pid, void* src, void* dst, size_t size)
 }
 ```
 
-```
+```c++
 void write_memory(pid_t pid, void* dst, void* src, size_t size)
 {
     /*
@@ -194,7 +194,7 @@ void write_memory(pid_t pid, void* dst, void* src, size_t size)
 ```
 
 Example:
-```
+```c++
 int main()
 {
     pid_t pid = get_process_id("target");
@@ -222,7 +222,7 @@ Read buffer (should be 1337): 1337
 
 # 1.2 - Getting a loaded module information
 On Linux, processes use shared libraries just like on Windows they use DLLs. One these shared libraries are loaded, we can get some information about them using the file '/proc/\<pid\>/maps', which contains information about all the loaded modules, and some extras, like stack and heap. This information can be used to access certain variables and values through offsets that are based off a module. This part is a little bit longer because it requires a lot of parsing of the maps file and we will also create a new type for our module information to make it easier to use. The information we will get is going to be: base address, size, end address, module name, module path. So let's make a corresponding structure with this information:
-```
+```c++
 typedef struct _module_t
 {
     std::string name;
@@ -248,7 +248,7 @@ The module is split in multiple regions due to different protection flags. Each 
 For this section of the guide, we're going to get the first base_address (in this case, 0x7f2a4aa04000), the last end address (in this case, 0x7f2a4abc9000) and the module path (in this case, /usr/lib/libc-2.32.so). The module name and size can be gotten through these other values.
 Now, let's make a function that parses the maps file of a process and then returns a module_t structure with all the information. The module will be gotten through its name or path. Also, we're going to get the closest match, so that you'll be able to get modules that have different versions on different OS's.
 
-```
+```c++
 module_t get_module(pid_t pid, std::string module_name)
 {
     module_t mod;
@@ -361,7 +361,7 @@ Maps file:
 ```
 
 Example:
-```
+```c++
 int main()
 {
     pid_t pid = get_process_id("target");
@@ -420,7 +420,7 @@ The return value of the syscall is stored in EAX/RAX.
 
 To inject a syscall, we're going to write our injection buffer in the EIP/RIP register (which is always executable, unless something goes wrong on the process normal execution), get the return value, and then restore the original execution.
 Let's make a function that does so.
-```
+```c++
 void* inject_syscall(
     pid_t pid, 
     int syscall_n, 
@@ -530,7 +530,7 @@ void* inject_syscall(
 ```
 
 Example:
-```
+```c++
 int main()
 {
     pid_t pid = get_process_id("target");
@@ -560,7 +560,7 @@ On the previous section, we learned how to inject syscalls. There are certain sy
 Check the man page for the functions above to understand them better.
 
 Now that we have a function to inject syscalls, making these functions will not be any problem:
-```
+```c++
 void* allocate_memory(pid_t pid, size_t size, int protection)
 {
     //mmap template:
@@ -598,7 +598,7 @@ void* allocate_memory(pid_t pid, size_t size, int protection)
 }
 ```
 
-```
+```c++
 void deallocate_memory(pid_t pid, void* src, size_t size)
 {
     //munmap template
@@ -607,7 +607,7 @@ void deallocate_memory(pid_t pid, void* src, size_t size)
 }
 ```
 
-```
+```c++
 void* protect_memory(pid_t pid, void* src, size_t size, int protection)
 {
     //mprotect template
@@ -617,7 +617,7 @@ void* protect_memory(pid_t pid, void* src, size_t size, int protection)
 ```
 
 Example:
-```
+```c++
 int main()
 {
     pid_t pid = get_process_id("target");
