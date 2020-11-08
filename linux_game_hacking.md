@@ -1,7 +1,7 @@
 # Linux Game Hacking
 
 # 0.1 - Introduction
-Linux game hacking is an unpopular topic, possibly because Linux is not very much used in personals desktops, but also because a lot of games don't run natively on it. Due to this limitations, I had a hard time figuring it all out, but I finally did it. This guide will use C++ to make everything more simple, but my <a href="https://github.com/rdbo/libmem">main game hacking framework (libmem)</a> is written in C and supports Windows and Linux, in case you're interested. Anyways, let's get started. The sections '1.X' will be dedicated to external game hacking and the sections '2.X' will be dedicated to internal game hacking.
+Linux game hacking is an unpopular topic, possibly because Linux is not very much used in personals desktops, but also because a lot of games don't run natively on it. Due to this limitations, I had a hard time figuring it all out, but I finally did it. This guide will use C++ to make everything more simple, but my <a href="https://github.com/rdbo/libmem">main game hacking framework (libmem)</a> is written in C and supports Windows and Linux, in case you're interested. This guide will also not have much error checking, because it is meant to be simple and straightforward. Anyways, let's get started. The sections '1.X' will be dedicated to external game hacking and the sections '2.X' will be dedicated to internal game hacking.
 
 # 0.2 - But before...
 This tutorial contains a lot of information, some of which you may have no knowledge about. Anything you don't understand from the Linux headers, you can check the man page of this X thing you don't know and it will give you a very detailed information about it, including return type, arguments, bugs, etc.
@@ -390,3 +390,271 @@ GDB Output:
 `(gdb) print mod
 $1 = {name = "target", path = "/home/rdbo/Documents/Codes/C/linux_gh/target", base = 0x5575192e3000, end = 0x5575192e8000, 
   size = 20480, handle = 0x0}`
+
+
+# 1.3 - Injecting syscalls
+
+
+Linux has something called 'ptrace', which is a syscall that allows us to control the execution flow of another process, the tracee, as a tracer (check out the man page for very detailed info). Before going further, let's understand Linux syscalls. Every syscall has a number that represents its action, and a syscall can have up to 5 arguments (arg0-arg5). 
+On 32 bits, these arguments are stored like this:
+```
+eax - syscall number
+ebx - arg0
+ecx - arg1
+edx - arg2
+esi - arg3
+edi - arg4
+ebp - arg5
+```
+On 64 bits:
+```
+rax - syscall number
+rdi - arg0
+rsi - arg1
+rdx - arg2
+r10 - arg3
+r8  - arg4
+r9  - arg5
+```
+The return value of the syscall is stored in EAX/RAX.
+
+To inject a syscall, we're going to write our injection buffer in the EIP/RIP register (which is always executable, unless something goes wrong on the process normal execution), get the return value, and then restore the original execution.
+Let's make a function that does so.
+```
+void* inject_syscall(
+    pid_t pid, 
+    int syscall_n, 
+    void* arg0, 
+    void* arg1, 
+    void* arg2, 
+    void* arg3, 
+    void* arg4, 
+    void* arg5
+){
+    void* ret = (void*)-1;
+    int status;
+    struct user_regs_struct old_regs, regs;
+    void* injection_addr = (void*)-1;
+
+    //This buffer is our payload, which will run a syscall properly on x86/x64
+    unsigned char injection_buf[] =
+    {
+#       if defined(ARCH_86) //32 bits syscall
+        0xcd, 0x80, //int80 (syscall)
+#       elif defined(ARCH_64) //64 bits syscall
+        0x0f, 0x05, //syscall
+#       endif
+        /* these nops are here because
+         * we're going to write memory using
+         * ptrace, and it always writes the size
+         * of a word, which means we have to make
+         * sure the buffer is long enough
+        */
+		0x90, //nop
+		0x90, //nop
+		0x90, //nop
+		0x90, //nop
+		0x90, //nop
+		0x90  //nop
+    };
+
+    //As ptrace will always write a uintptr_t, let's make sure we're using proper buffers
+    uintptr_t old_data;
+    uintptr_t injection_buffer;
+    memcpy(&injection_buffer, injection_buf, sizeof(injection_buffer));
+
+    //Attach to process using 'PTRACE_ATTACH'
+    ptrace(PTRACE_ATTACH, pid, NULL, NULL);
+    wait(&status);
+
+    /* Get the current registers using 'PTRACE_GETREGS' so that
+     * we can restore the execution later
+     * and also modify the bytes of EIP/RIP
+    */
+
+    ptrace(PTRACE_GETREGS, pid, NULL, &old_regs);
+    regs = old_regs;
+
+    //Now, let's set up the registers that will be injected into the tracee
+
+#   if defined(ARCH_86)
+    regs.eax = (uintptr_t)syscall_n;
+    regs.ebx = (uintptr_t)arg0;
+    regs.ecx = (uintptr_t)arg1;
+    regs.edx = (uintptr_t)arg2;
+    regs.esi = (uintptr_t)arg3;
+    regs.edi = (uintptr_t)arg4;
+    regs.ebp = (uintptr_t)arg5;
+    injection_addr = (void*)regs.eip;
+#   elif defined(ARCH_64)
+    regs.rax = (uintptr_t)syscall_n;
+    regs.rdi = (uintptr_t)arg0;
+    regs.rsi = (uintptr_t)arg1;
+    regs.rdx = (uintptr_t)arg2;
+    regs.r10 = (uintptr_t)arg3;
+    regs.r8  = (uintptr_t)arg4;
+    regs.r9  = (uintptr_t)arg5;
+    injection_addr = (void*)regs.rip;
+#   endif
+
+    //Let's store the buffer at EIP/RIP that we're going to modify into 'old_data' using 'PTRACE_PEEKDATA'
+    old_data = (uintptr_t)ptrace(PTRACE_PEEKDATA, pid, injection_addr, NULL);
+
+    //Let's write our payload into the EIP/RIP of the target process using 'PTRACE_POKEDATA'
+    ptrace(PTRACE_POKEDATA, pid, injection_addr, injection_buffer);
+
+    //Let's inject our modified registers into the target process using 'PTRACE_SETREGS'
+    ptrace(PTRACE_SETREGS, pid, NULL, &regs);
+
+    //Let's run a single step in the target process (execute one assembly instruction)
+    ptrace(PTRACE_SINGLESTEP, pid, NULL, NULL);
+    waitpid(pid, &status, WSTOPPED); //Wait for the instruction to run
+
+    //Let's get the registers after the syscall to store the return value
+    ptrace(PTRACE_GETREGS, pid, NULL, &regs);
+#   if defined(ARCH_86)
+    ret = (void*)regs.eax;
+#   elif defined(ARCH_64)
+    ret = (void*)regs.rax;
+#   endif
+
+    //Let's write the old data at EIP/RIP
+    ptrace(PTRACE_POKEDATA, pid, (void*)injection_addr, old_data);
+
+    //Let's restore the old registers to continue the normal execution
+    ptrace(PTRACE_SETREGS, pid, NULL, &old_regs);
+    ptrace(PTRACE_DETACH, pid, NULL, NULL); //Detach and continue the execution
+
+    return ret;
+}
+```
+
+Example:
+```
+int main()
+{
+    pid_t pid = get_process_id("target");
+    module_t mod = get_module(pid, "target");
+    inject_syscall(pid, __NR_exit, (void*)-1, NULL, NULL, NULL, NULL, NULL); //This will force the target process to exit with code -1
+    return 0;
+}
+```
+
+Output:
+```
+PID: 6010
+Waiting...
+Address: 0x5608bac84068
+Value: 10
+$ echo $? #This prints the last exit code (which should be -1, if everything went fine)
+255 #This is -1, but as an unsigned char.
+```
+
+# 1.4 - Protecting/Allocating/Deallocating Memory
+
+On the previous section, we learned how to inject syscalls. There are certain syscalls that are very usefull for us, such as \__NR_mmap, \__NR_mmap2, \__NR_mprotect, \__NR_munmap.
+
+\__NR_mmap and \_NR_mmap2 (for 32 bits) run the function mmap, which can be used to allocate memory.
+\__NR_munmap runs the function munmap, which can be used to deallocate memory
+\__NR_mprotect runs the function mprotect, which can be used to change the protection flags of a memory region.
+Check the man page for the functions above to understand them better.
+
+Now that we have a function to inject syscalls, making these functions will not be any problem:
+```
+void* allocate_memory(pid_t pid, size_t size, int protection)
+{
+    //mmap template:
+    //void *mmap (void *__addr, size_t __len, int __prot, int __flags, int __fd, __off_t __offset);
+
+    void* ret = (void*)-1;
+#   if defined(ARCH_86)
+    ret = inject_syscall(
+        pid, 
+        //__NR_mmap has been deprecated for 32 bits a long time ago, so we're going to use __NR_mmap2
+        __NR_mmap2, //syscall number
+        //arguments
+        (void*)0, 
+        (void*)size, 
+        (void*)protection, 
+        (void*)(MAP_ANON | MAP_PRIVATE), 
+        (void*)-1, 
+        (void*)0
+    );
+#   elif defined(ARCH_64)
+    ret = inject_syscall(
+        pid, 
+        __NR_mmap, //syscall number
+        //arguments
+        (void*)0, 
+        (void*)size, 
+        (void*)(uintptr_t)protection, 
+        (void*)(MAP_ANON | MAP_PRIVATE), 
+        (void*)-1, 
+        (void*)0
+    );
+#   endif
+
+    return ret;
+}
+```
+
+```
+void deallocate_memory(pid_t pid, void* src, size_t size)
+{
+    //munmap template
+    //int munmap (void *__addr, size_t __len);
+    inject_syscall(pid, __NR_munmap, src, (void*)size, NULL, NULL, NULL, NULL);
+}
+```
+
+```
+void* protect_memory(pid_t pid, void* src, size_t size, int protection)
+{
+    //mprotect template
+    //int mprotect (void *__addr, size_t __len, int __prot);
+    return inject_syscall(pid, __NR_mprotect, src, (void*)size, (void*)(uintptr_t)protection, NULL, NULL, NULL);
+}
+```
+
+Example:
+```
+int main()
+{
+    pid_t pid = get_process_id("target");
+    module_t mod = get_module(pid, "target");
+    void* alloc = allocate_memory(pid, 10, PROT_EXEC | PROT_READ | PROT_WRITE);
+    std::cout << "Allocated memory: " << alloc << std::endl;
+    protect_memory(pid, mod.base, mod.size, PROT_EXEC | PROT_READ | PROT_WRITE);
+    return 0;
+}
+```
+
+Output:
+```
+Command Line Path: /proc/6489/cmdline
+Command Line: ./target
+Current Process Name: target
+Process ID found: 6489
+Maps file path: /proc/6489/maps
+Module path string: /home/rdbo/Documents/Codes/C/linux_gh/target
+Module name: target
+Base Address: 0x563f6eaf5000
+End Address: 0x563f6eafa000
+Module Size: 0x5000
+Allocated memory: 0x7f8d159a6000
+```
+
+Maps file:
+```
+563f6eaf5000-563f6eaf8000 rwxp 00000000 08:01 2242313                    /home/rdbo/Documents/Codes/C/linux_gh/target
+563f6eaf8000-563f6eafa000 rwxp 00002000 08:01 2242313                    /home/rdbo/Documents/Codes/C/linux_gh/target
+563f70729000-563f7074a000 rw-p 00000000 00:00 0                          [heap]
+...
+7f8d1596f000-7f8d15971000 rw-p 00000000 00:00 0 
+7f8d159a6000-7f8d159a7000 rwxp 00000000 00:00 0
+7f8d159a7000-7f8d159a9000 r--p 00000000 08:01 27793455                   /usr/lib/ld-2.32.so
+7f8d159a9000-7f8d159ca000 r-xp 00002000 08:01 27793455                   /usr/lib/ld-2.32.so
+7f8d159ca000-7f8d159d3000 r--p 00023000 08:01 27793455                   /usr/lib/ld-2.32.so
+7f8d159d3000-7f8d159d4000 r--p 0002b000 08:01 27793455                   /usr/lib/ld-2.32.so
+7f8d159d4000-7f8d159d6000 rw-p 0002c000 08:01 27793455                   /usr/lib/ld-2.32.so
+```
