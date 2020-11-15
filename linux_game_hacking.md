@@ -656,3 +656,200 @@ Maps file:
 7f8d159d3000-7f8d159d4000 r--p 0002b000 08:01 27793455                   /usr/lib/ld-2.32.so
 7f8d159d4000-7f8d159d6000 rw-p 0002c000 08:01 27793455                   /usr/lib/ld-2.32.so
 ```  
+
+# 1.5 - Injecting Shared Libraries
+
+Shared libraries (.so) are the Linux equivalent of Windows DLLs. Let's understand them a bit further:
+. Shared are generally compiled using the flags `-shared` (identifies the output as a shared library) and `-fPIC` (tells the compiler this code can be placed anywhere in the virtual memory, 'position independent code').
+. They can be initialized with a function marked with `__attribute__((constructor))` and uninitialized with `__attribute__((destructor))`. This is not a rule and it is compiler dependent (works on GCC and CLANG, which are the most used compilers on Linux).
+. Once they are injected, we can modify and access the target process memory internally, meaning we don't have to write any fancy functions like in external, just access the memory directly.
+Now, lets understand how we're going to inject the shared library.
+
+Any running process on Linux that uses C and is compiled is an ELF loads a library called `libc`, which contains a function called `__libc_dlopen_mode`. This function can be used to load shared libraries, just like `dlopen`, except it does not require `libdl` to be loaded. On some distros, though, `__libc_dlopen_mode` has a different behaviour, so you'd have to make sure it has `libdl` loaded to continue. The first parameter of `__libc_dlopen_mode` and `dlopen` is the library path (which can be either relative or absolute), passed in as a `const char*`. The next parameter is an `int` which lets us specify some flags. For now, we're going to only use the flag `RTLD_LAZY` (check the man page to get to know more). 
+
+The parameters of library functions on `x86` are all passed in the stack. On `x64`, the first 6 parameters are passed in registers and the rest goes to the stack:
+```
+x64 library call registers:
+rdi - arg0
+rsi - arg1
+rdx - arg2
+rcx - arg3
+r8  - arg4
+r9  - arg5
+```
+
+So here's the logic:
+. Load the external 'libc' into the caller process and get the address of the `__libc_dlopen_mode` of the target process.
+. Allocate memory to put the payload and the `path` parameter into the target process.
+. Setup the registers and inject the payload
+. Restore the original execution.
+. Deallocate the previously allocated memory.
+
+Here's the code of the shared library we're going to inject:
+```c++
+#include <stdio.h>
+#include <stdlib.h>
+
+void __attribute__((constructor)) lib_entry()
+{
+    //It prints "Injected!" once the library gets loaded.
+    printf("Injected!\n");
+}
+```
+
+... and the code of the target process:
+```c++
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+
+int main()
+{
+    while(1)
+    {
+        printf("Waiting...\n");
+        sleep(1);
+    }
+    return 0;
+}
+```
+
+Now, let's make a function that does the injection:
+```c++
+void load_library(pid_t pid, std::string lib_path)
+{
+    /* Let's get the address of the 'libc_dlopen_mode' of the target process
+     * and store it on 'dlopen_ex' by loading the LIBC of the target process
+     * on here and then getting the offset of its own '__libc_dlopen_mode'.
+     * Then we sum this offset to the base of the external LIBC module
+     */
+
+    module_t libc_ex = get_module(pid, "/libc");
+
+    //Load the external libc on this process
+    void* libc_handle = dlopen(libc_ex.path.c_str(), RTLD_LAZY);
+
+    //Get the symbol '__libc_dlopen_mode' from the loaded LIBC module
+    void* dlopen_in = dlsym(libc_handle, "__libc_dlopen_mode");
+
+    //Get the loaded libc module information and store it on libc_in
+    module_t libc_in = get_module(getpid(), "/libc");
+
+    //Get the offset by subtracting 'libc_in.base' from 'dlopen_in'
+    uintptr_t offset = (uintptr_t)dlopen_in - (uintptr_t)libc_in.base;
+
+    //Get the external '__libc_dlopen_mode' by summing the offset to the libc_ex.base
+    
+    void* dlopen_ex = (void*)((uintptr_t)libc_ex.base + offset);
+
+    //--- Now let's go to the injection part
+
+    int status;
+    struct user_regs_struct old_regs, regs;
+    unsigned char inj_buf[] =
+    {
+#       if defined(ARCH_86)
+        /* We have to pass the parameters to the stack (in reversed order)
+         * The register 'ebx' will store the library path address and the
+         * register 'ecx' will store the flag (RTLD_LAZY)
+         * After pushing the parameters to the stack, we will call EAX, which
+         * will store the address of '__libc_dlopen_mode'
+         */
+        0x51,       //push ecx
+        0x53,       //push ebx
+        0xFF, 0xD0, //call eax
+        0xCC,       //int3 (SIGTRAP)
+#       elif defined(ARCH_64)
+        /* On 'x64', we dont have to pass anything to the stack, as we're only
+         * using 2 parameters, which will be stored on RDI (library path address) and
+         * RSI (flags, in this case RTLD_LAZY).
+         * This means we just have to call the __libc_dlopen_mode function, which 
+         * will be on RAX.
+         */
+
+        0xFF, 0xD0, //call rax
+        0xCC,       //int3 (SIGTRAP)
+#       endif
+    };
+
+    //Let's allocate memory for the payload and the library path
+    size_t inj_size = sizeof(inj_buf) + lib_path.size();
+    void* inj_addr = allocate_memory(pid, inj_size, PROT_EXEC | PROT_READ | PROT_WRITE);
+    void* path_addr = (void*)((uintptr_t)inj_addr + sizeof(inj_buf));
+
+    //Write the memory to our allocated address
+    write_memory(pid, inj_addr, inj_buf, sizeof(inj_buf));
+    write_memory(pid, path_addr, (void*)lib_path.c_str(), lib_path.size());
+
+    //Attach to the target process
+    ptrace(PTRACE_ATTACH, pid, NULL, NULL);
+    wait(&status);
+
+    //Get the current registers to restore later
+    ptrace(PTRACE_GETREGS, pid, NULL, &old_regs);
+    regs = old_regs;
+
+    //Let's setup the registers according to our payload
+#   if defined(ARCH_86)
+    regs.eax = (long)dlopen_ex;
+    regs.ebx = (long)path_addr;
+    regs.ecx = (long)RTLD_LAZY;
+    regs.eip = (long)inj_addr; //The execution will continue from 'inj_addr' (EIP)
+#   elif defined(ARCH_64)
+    regs.rax = (uintptr_t)dlopen_ex;
+    regs.rdi = (uintptr_t)path_addr;
+    regs.rsi = (uintptr_t)RTLD_LAZY;
+    regs.rip = (uintptr_t)inj_addr; //The execution will continue from 'inj_addr' (RIP)
+#   endif
+
+    //Inject the modified registers to the target process
+    ptrace(PTRACE_SETREGS, pid, NULL, &regs);
+
+    //Continue the execution
+    ptrace(PTRACE_CONT, pid, NULL, NULL);
+
+    //Wait for the int3 (SIGTRAP) breakpoint
+    waitpid(pid, &status, WSTOPPED);
+
+    //Set back the old registers
+    ptrace(PTRACE_SETREGS, pid, NULL, &old_regs);
+
+    //Detach from the process and continue the execution
+    ptrace(PTRACE_DETACH, pid, NULL, NULL);
+
+    //Deallocate the memory we allocated for the injection buffer and the library path
+    deallocate_memory(pid, inj_addr, inj_size);
+}
+```
+
+Main function:
+```
+int main()
+{
+    pid_t pid = get_process_id("target");
+    std::string lib_path = "/your/path/libtest.so";
+    load_library(pid, lib_path);
+    return 0;
+}
+```
+
+Output (from the target program, same in x86 and x64):
+```
+Waiting...
+Waiting...
+Waiting...
+Waiting...
+Waiting...
+Waiting...
+Waiting...
+Waiting...
+Waiting...
+Waiting...
+Waiting...
+Injected!
+Waiting...
+Waiting...
+Waiting...
+Waiting...
+Waiting...
+```
