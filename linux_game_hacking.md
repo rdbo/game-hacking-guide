@@ -657,17 +657,17 @@ Maps file:
 7f8d159d4000-7f8d159d6000 rw-p 0002c000 08:01 27793455                   /usr/lib/ld-2.32.so
 ```  
 
-# 1.5 - Injecting Shared Libraries
-
-Shared libraries (.so) are the Linux equivalent of Windows DLLs. Let's understand them a bit further:
-. Shared are generally compiled using the flags `-shared` (identifies the output as a shared library) and `-fPIC` (tells the compiler this code can be placed anywhere in the virtual memory, 'position independent code').
-. They can be initialized with a function marked with `__attribute__((constructor))` and uninitialized with `__attribute__((destructor))`. This is not a rule and it is compiler dependent (works on GCC and CLANG, which are the most used compilers on Linux).
-. Once they are injected, we can modify and access the target process memory internally, meaning we don't have to write any fancy functions like in external, just access the memory directly.
-Now, lets understand how we're going to inject the shared library.
-
-Any running process on Linux that uses C and is compiled is an ELF loads a library called `libc`, which contains a function called `__libc_dlopen_mode`. This function can be used to load shared libraries, just like `dlopen`, except it does not require `libdl` to be loaded. On some distros, though, `__libc_dlopen_mode` has a different behaviour, so you'd have to make sure it has `libdl` loaded to continue. The first parameter of `__libc_dlopen_mode` and `dlopen` is the library path (which can be either relative or absolute), passed in as a `const char*`. The next parameter is an `int` which lets us specify some flags. For now, we're going to only use the flag `RTLD_LAZY` (check the man page to get to know more). 
-
-The parameters of library functions on `x86` are all passed in the stack. On `x64`, the first 6 parameters are passed in registers and the rest goes to the stack:
+# 1.5 - Injecting Shared Libraries  
+  
+Shared libraries (.so) are the Linux equivalent of Windows DLLs. Let's understand them a bit further:  
+. Shared are generally compiled using the flags `-shared` (identifies the output as a shared library) and `-fPIC` (tells the compiler this code can be placed anywhere in the virtual memory, 'position independent code').  
+. They can be initialized with a function marked with `__attribute__((constructor))` and uninitialized with `__attribute__((destructor))`. This is not a rule and it is compiler dependent (works on GCC and CLANG, which are the most used compilers on Linux).  
+. Once they are injected, we can modify and access the target process memory internally, meaning we don't have to write any fancy functions like in external, just access the memory directly.  
+Now, lets understand how we're going to inject the shared library.  
+  
+Any running process on Linux that uses C and is compiled is an ELF loads a library called `libc`, which contains a function called `__libc_dlopen_mode`. This function can be used to load shared libraries, just like `dlopen`, except it does not require `libdl` to be loaded. On some distros, though, `__libc_dlopen_mode` has a different behaviour, so you'd have to make sure it has `libdl` loaded to continue. The first parameter of `__libc_dlopen_mode` and `dlopen` is the library path (which can be either relative or absolute), passed in as a `const char*`. The next parameter is an `int` which lets us specify some flags. For now, we're going to only use the flag `RTLD_LAZY` (check the man page to get to know more).  
+  
+The parameters of library functions on `x86` are all passed in the stack. On `x64`, the first 6 parameters are passed in registers and the rest goes to the stack:  
 ```
 x64 library call registers:
 rdi - arg0
@@ -676,16 +676,16 @@ rdx - arg2
 rcx - arg3
 r8  - arg4
 r9  - arg5
-```
-
-So here's the logic:
-. Load the external 'libc' into the caller process and get the address of the `__libc_dlopen_mode` of the target process.
-. Allocate memory to put the payload and the `path` parameter into the target process.
-. Setup the registers and inject the payload
-. Restore the original execution.
-. Deallocate the previously allocated memory.
-
-Here's the code of the shared library we're going to inject:
+```  
+  
+So here's the logic:  
+. Load the external 'libc' into the caller process and get the address of the `__libc_dlopen_mode` of the target process.  
+. Allocate memory to put the payload and the `path` parameter into the target process.  
+. Setup the registers and inject the payload.  
+. Restore the original execution.  
+. Deallocate the previously allocated memory.  
+  
+Here's the code of the shared library we're going to inject:  
 ```c++
 #include <stdio.h>
 #include <stdlib.h>
@@ -695,9 +695,9 @@ void __attribute__((constructor)) lib_entry()
     //It prints "Injected!" once the library gets loaded.
     printf("Injected!\n");
 }
-```
-
-... and the code of the target process:
+```  
+  
+... and the code of the target process:  
 ```c++
 #include <stdio.h>
 #include <stdlib.h>
@@ -712,9 +712,9 @@ int main()
     }
     return 0;
 }
-```
-
-Now, let's make a function that does the injection:
+```  
+  
+Now, let's make a function that does the injection:  
 ```c++
 void load_library(pid_t pid, std::string lib_path)
 {
@@ -820,9 +820,9 @@ void load_library(pid_t pid, std::string lib_path)
     //Deallocate the memory we allocated for the injection buffer and the library path
     deallocate_memory(pid, inj_addr, inj_size);
 }
-```
-
-Main function:
+```  
+  
+Main function:  
 ```
 int main()
 {
@@ -831,9 +831,9 @@ int main()
     load_library(pid, lib_path);
     return 0;
 }
-```
-
-Output (from the target program, same in x86 and x64):
+```  
+  
+Output (from the target program, same in x86 and x64):  
 ```
 Waiting...
 Waiting...
@@ -852,4 +852,4 @@ Waiting...
 Waiting...
 Waiting...
 Waiting...
-```
+```  
