@@ -822,7 +822,7 @@ void load_library(pid_t pid, std::string lib_path)
 }
 ```  
   
-Main function:  
+Example:  
 ```
 int main()
 {
