@@ -969,14 +969,126 @@ And finally, to change the protection flags, we call `mprotect`:
 void protect_memory_in(void* addr, size_t size, int prot)
 {
     long pagesize = sysconf(_SC_PAGE_SIZE); //The system page size
-    void* src = (void*)((uintptr_t)address & -pagesize); //Making 'addr' a multiple of the system page size
+    void* src = (void*)((uintptr_t)addr & -pagesize); //Making 'addr' a multiple of the system page size
     mprotect(
-        src, //address
+        src,  //address
         size, //length
-        protection, //protection
+        prot  //protection
     );
 }
 ```  
   
 # 2.4 - Code detouring / hooking  
-Detouring or Hooking is a technique used to change the execution flow of a program. Basically, we detour a function and it will go through our custom function, and then we can restore the normal execution. It is the same as on Windows, because it is all x86 instructions at the end of the day. (more coming...)  
+Detouring or Hooking is a technique used to change the execution flow of a program. Basically, we detour a function (src) and it will go through our custom function (dst), and then we can restore the normal execution using a 'gateway'. It is the same as on Windows, because it is all x86 instructions at the end of the day. To detour a function, we just have to inject assembly instructions as raw bytes somewhere in the target function that will make it go through ours.  
+There are various methods of detouring a function:
+1. Relative jump (x86):
+This method involves injecting a single instruction, which is `jmp <REL_ADDR>`, where the relative address in an address based on the instruction pointer (EIP/RIP). This is can be used on x64 too, but it might not work some times, as the relative address is 4 bytes long and the x64 memory can go way farther than you could fit in 4 bytes. The payload for this method would be the following:
+```c++
+unsigned char payload[] =
+{
+    0xE9, 0x0, 0x0, 0x0, 0x0 //jmp EIP/RIP+0x0
+};
+
+//We can set the relative address of the jump with C++ directly:
+*(uintptr_t*)(&payload[1]) = dst - src - 5; //Get the relative address and write it to our payload
+//payload is now 'jmp <REL_ADDR>'
+```
+
+2. Absolute Jump (x86/x64):
+As our last method was limited to 4 bytes long addresses, let's do it a bit differently: let's store the absolute address of our hook function inside a register and then jump to that register. In this case, we're going to use EAX/RAX. The instruction differs a bit on x86 and x64, so we're going to use slightly different code:
+```c++
+//x86:
+unsigned char payload[] =
+{
+    0xB8, 0x0, 0x0, 0x0, 0x0, //mov EAX, 0x0
+    0xFF, 0xE0                //jmp EAX
+};
+
+//Let's fix the payload:
+*(uintptr_t*)(&payload[1]) = dst;
+```
+
+```c++
+//x64:
+unsigned char payload[] =
+{
+    0x48, 0xB8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, //mov RAX, 0x0
+    0xFF, 0xE0                                          //jmp RAX
+};
+
+//Let's fix the payload:
+*(uintptr_t*)(&payload[2]) = dst;
+```
+
+3. Relative Call (x86):
+Same as the relative jump, but the payload is a bit different:
+```c++
+unsigned char payload[] =
+{
+    0xE8, 0x0, 0x0, 0x0, 0x0 //call EIP/RIP+0x0
+};
+
+*(uintptr_t*)(&payload[1]) = dst - src - 5; //Get the relative address and write it to our payload
+```
+
+4. Absolute Call (x86/x64):
+Same as the absolute jump, but the payload is a bit different:
+```c++
+//x86:
+unsigned char payload[] =
+{
+    0xB8, 0x0, 0x0, 0x0, 0x0, //mov EAX, 0x0
+    0xFF, 0xD0                //call EAX/RAX
+};
+
+*(uintptr_t*)(&payload[1]) = dst;
+```
+```c++
+//x64:
+unsigned char payload[] =
+{
+    0x48, 0xB8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, //mov RAX, 0x0
+    0xFF, 0xD0                                          //call RAX
+};
+
+*(uintptr_t*)(&payload[2]) = dst;
+```
+
+5. Relative Push/Ret (x86):
+On this method, we use the instruction `PUSH` to add an relative address to the stack, and then we use `RET` to continue the execution from there.
+```c++
+unsigned char payload[] =
+{
+    0x68, 0x0, 0x0, 0x0, 0x0, //push 0x0
+    0xC3                      //ret
+};
+
+*(uintptr_t*)(&payload[1]) = dst;
+```
+
+6. Absolute Push/Ret (x86/x64):
+Just like the other 'absolute' methods, we're going to put our destination address in a register. Then, we push this register to the stack and return the execution from there:
+```c++
+//x86:
+unsigned char payload[] =
+{
+    0xB8, 0x0, 0x0, 0x0, 0x0, //mov RAX, 0x0
+    0x50,                     //push RAX
+    0xC3,                     //ret
+};
+
+*(uintptr_t*)(&payload[1]) = dst;
+```
+```c++
+//x64:
+unsigned char payload[] =
+{
+    0x48, 0xB8, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, //mov RAX, 0x0
+    0x50,                                               //push RAX
+    0xC3,                                               //ret
+};
+
+*(uintptr_t*)(&payload[1]) = dst;
+```
+
+(more coming...)
