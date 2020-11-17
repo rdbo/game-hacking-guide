@@ -851,11 +851,11 @@ Waiting...
 
 # 2.0 - Shared Libraries (internal)  
 
-Now that we can inject shared libraries on any process we want, we can move on to internal. This part is very, very similar to Windows and does not require much understanding of Linux kernel code. We have used a sample shared library to demonstrate shared library injection, but let's get a bit deeper, starting with function attributes:
-`__attribute__((constructor))` - whatever function that contains this attribute, will be run once the library is loaded.
-`__attribute__((destructor))`  - whatever function that contains this attribute, will be run once the library is **un**loaded.
-The library shares the same virtual memory as the target process, so we can handle everything directly. Also, from previous experiences I had, I noticed that writing C++ directly into the `__attribute__((constructor))` function would make the program crash (in my case). One workaround I did was creating a thread with pthread and running a different function:
-```
+Now that we can inject shared libraries on any process we want, we can move on to internal. This part is very, very similar to Windows and does not require much understanding of Linux kernel code. We have used a sample shared library to demonstrate shared library injection, but let's get a bit deeper, starting with function attributes:  
+`__attribute__((constructor))` - whatever function that contains this attribute, will be run once the library is loaded.  
+`__attribute__((destructor))`  - whatever function that contains this attribute, will be run once the library is **un**loaded.  
+The library shares the same virtual memory as the target process, so we can handle everything directly. Also, from previous experiences I had, I noticed that writing C++ directly into the `__attribute__((constructor))` function would make the program crash (in my case). One workaround I did was creating a thread with pthread and running a different function:  
+```c++
 #include <pthread.h>
 
 void* main_thread(void* args)
