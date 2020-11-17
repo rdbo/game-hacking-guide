@@ -877,6 +877,8 @@ void __attribute__((destructor)) lib_exit()
 }
 ```
 
+I *think* you can also link the standard C++ library to your shared library and avoiding this workaround, but I couldn't get it working, so that's that.
+
 # 2.1 - Handling process and modules  
 
 When doing things internally, we don't need to handle the process. If you still want to get its PID, you can use `getpid()`. To handle the modules, you could use something called `dl_iterate_phdr`, which will iterate through every loaded module and run a callback function. We're not going to use this method, because it is a bit more complicated and also I had an issue where the base address of the returned module information was wrong. So, let's keep using the same method as the external: parsing the maps file and reading the module information from there.  
