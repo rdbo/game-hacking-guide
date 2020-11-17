@@ -848,3 +848,133 @@ Waiting...
 Waiting...
 Waiting...
 ```  
+
+# 2.0 - Shared Libraries (internal)  
+
+Now that we can inject shared libraries on any process we want, we can move on to internal. This part is very, very similar to Windows and does not require much understanding of Linux kernel code. We have used a sample shared library to demonstrate shared library injection, but let's get a bit deeper, starting with function attributes:
+`__attribute__((constructor))` - whatever function that contains this attribute, will be run once the library is loaded.
+`__attribute__((destructor))`  - whatever function that contains this attribute, will be run once the library is **un**loaded.
+The library shares the same virtual memory as the target process, so we can handle everything directly. Also, from previous experiences I had, I noticed that writing C++ directly into the `__attribute__((constructor))` function would make the program crash (in my case). One workaround I did was creating a thread with pthread and running a different function:
+```
+#include <pthread.h>
+
+void* main_thread(void* args)
+{
+    //...
+}
+
+void __attribute__((constructor)) lib_entry()
+{
+    printf("Library loaded!\n");
+    pthread_t thread;
+    pthread_create(&thread, NULL, main_thread, (void*)0);
+    //The thread we just created will run once the execution returns
+}
+
+void __attribute__((destructor)) lib_exit()
+{
+    printf("Library unloaded!\n");
+}
+```
+
+# 2.1 - Handling process and modules  
+
+When doing things internally, we don't need to handle the process. If you still want to get its PID, you can use `getpid()`. To handle the modules, you could use something called `dl_iterate_phdr`, which will iterate through every loaded module and run a callback function. We're not going to use this method, because it is a bit more complicated and also I had an issue where the base address of the returned module information was wrong. So, let's keep using the same method as the external: parsing the maps file and reading the module information from there.  
+Let's write a wrapper function for the external one that doesn't need the 'pid' parameter:  
+```c++
+module_t get_module_in(std:string mod_name)
+{
+    //Get the caller process ID through 'getpid()' and then use the external function
+    return get_module(getpid(), mod_name);
+}
+```  
+  
+# 2.2 - Reading/Writing memory  
+  
+On internal, reading and writing memory it really straightforward and there are various ways of doing so. Because we're using the same virtual memory as our target process, we can just modify memory using, for example, `memcpy`, or even dereferencing an address and reading or writing to it.  
+Reading memory (example 1, recommended):  
+```c++
+void* address_of_a_buffer = (void*)0xdeadbeef;
+int read_buffer;
+//memcpy(dst, src, size)
+memcpy(&read_buffer, address_of_a_buffer, sizeof(read_buffer));
+```
+
+Reading memory (example 2):  
+```c++
+void* address_of_a_buffer = (void*)0xdeadbeef;
+int read_buffer = *(int*)address_of_a_buffer;
+```
+
+Writing memory (example 1, recommended):  
+```c++
+//we just need reverse the parameters from the read memory example
+void* address_of_a_buffer = (void*)0xdeadbeef;
+int read_buffer = 1337;
+//memcpy(dst, src, size)
+memcpy(address_of_a_buffer, &read_buffer, sizeof(read_buffer));
+//The (4-byte) value of the address 0xdeadbeef is now '1337'.
+```  
+  
+Writing memory (example 2):  
+```c++
+void* address_of_a_buffer = (void*)0xdeadbeef;
+*(int*)address_of_a_buffer = 1337;
+//The (4-byte) value of 0xdeadbeef is now '1337'
+```  
+  
+One more thing: to read an address, you have to make sure that page is readable. Same thing for writing to an address, the page it is in has to be writable. If it's not, we can just change it's protection flags.  
+  
+# 2.3 - Protecting/Allocating/Deallocating Memory  
+  
+The concept of allocation, deallocating and protecting memory internally is pretty much the same as externally, except we don't have to do any code injection, just directly call the functions.  
+  
+`mmap` - can be used to allocate memory  
+`munmap` - can be used to deallocate memory  
+`mprotect` - can be used to change the protection flags of a memory region  
+  
+To allocate memory, well, we would just call `mmap` as we did before:  
+```c++
+size_t size = 0x1000; //allocation size
+int prot = PROT_EXEC | PROT_READ | PROT_WRITE; //protection flags
+mmap(
+    NULL, //address
+    size, //length
+    prot, //protection
+    MAP_PRIVATE | MAP_ANON, //flags
+    -1, //file descriptor
+    0//offset
+);
+```  
+  
+To deallocate memory, we just call `munmap` like we did already:  
+```c++
+size_t size = 0x1000;
+void* alloc = mmap(/* ... */);
+munmap(
+    alloc, //address
+    size //length
+);
+```  
+  
+And finally, to change the protection flags, we call `mprotect`:  
+```c++
+/* Attention: the address used in 'mprotect' *has* to be a multiple of the system page size,
+ * that's why we're going to make a function especially for it, so that you don't need to do the
+ * rounding every time
+ */
+
+void protect_memory_in(void* addr, size_t size, int prot)
+{
+    long pagesize = sysconf(_SC_PAGE_SIZE); //The system page size
+    void* src = (void*)((uintptr_t)address & -pagesize); //Making 'addr' a multiple of the system page size
+    mprotect(
+        src, //address
+        size, //length
+        protection, //protection
+    );
+}
+```  
+  
+# 2.4 - Code detouring / hooking  
+Detouring or Hooking is a technique used to change the execution flow of a program. Basically, we detour a function and it will go through our custom function, and then we can restore the normal execution. It is the same as on Windows, because it is all x86 instructions at the end of the day. (more coming...)  
