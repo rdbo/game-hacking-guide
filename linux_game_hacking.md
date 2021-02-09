@@ -118,7 +118,7 @@ pid_t get_process_id(std::string process_name)
 ```
   
 Extra:  
-Instead of parsing the '/proc/<pid>/cmdline' file, you can use the function 'readlink' to get the path of the executable:  
+Instead of parsing the '/proc/\<pid\>/cmdline' file, you can use the function 'readlink' to get the path of the executable:  
 ```c++
 char path[64] = { 0 };
 snprintf(path, sizeof(path), "/proc/%i/exe", pid);
