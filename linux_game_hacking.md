@@ -201,6 +201,29 @@ void write_memory(pid_t pid, void* dst, void* src, size_t size)
 }
 ```  
   
+Alternative way: you can open the file `/proc/\<pid\>/mem` as a file in your process and then use the functions `pread` and `pwrite` to read or write memory to the target process.
+```c++
+void read_memory(pid_t pid, void *src, void *buf, size_t size)
+{
+    char path_buf[64] = { 0 };
+    snprintf(path_buf, sizeof(path_buf) - sizeof(char), "/proc/%i/mem", pid);
+    int fd = open(path_buf, O_RDONLY);
+    pread(fd, buf, size, (off_t)src);
+    close(fd);
+}
+```
+  
+```c++
+void write_memory(pid_t pid, void *dst, void *buf, size_t size)
+{
+    char path_buf[64] = { 0 };
+    snprintf(path_buf, sizeof(path_buf) - sizeof(char), "/proc/%i/mem", pid);
+    int fd = open(path_buf, O_WRONLY);
+    pwrite(fd, buf, size, (off_t)dst);
+    close(fd);
+}
+```  
+  
 Example:  
 ```c++
 int main()
