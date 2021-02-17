@@ -201,7 +201,7 @@ void write_memory(pid_t pid, void* dst, void* src, size_t size)
 }
 ```  
   
-Alternative way: you can open the file `/proc/\<pid\>/mem` as a file in your process and then use the functions `pread` and `pwrite` to read or write memory to the target process.
+Alternative way: you can open the file '/proc/\<pid\>/mem' as a file in your process and then use the functions 'pread' and 'pwrite' to read or write memory to the target process.  
 ```c++
 void read_memory(pid_t pid, void *src, void *buf, size_t size)
 {
